@@ -18,7 +18,6 @@ for dataset in datasets:
 
     command = [
         "python", "Train_fedlag.py",
-        "num_clients", str(dataset),
         "--dataset", str(dataset),
     ]
     print(f"Running command: {' '.join(command)}")
