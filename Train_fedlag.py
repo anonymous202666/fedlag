@@ -33,7 +33,7 @@ parser.add_argument('--root', type=str, default='/home/ai2/work/fedtad/dataset')
 parser.add_argument('--gpu_id', type=str, default='0')
 parser.add_argument('--dataset', type=str, default="CiteSeer") # Cora, PubMed
 parser.add_argument('--partition', type=str, default="Louvain")
-parser.add_argument('--part_delta', type=int, default=20)
+parser.add_argument('--part_delta', type=int, default=10)
 parser.add_argument('--num_clients', type=int, default=10)
 parser.add_argument('--num_rounds', type=int, default=100)
 parser.add_argument('--num_epochs', type=int, default=5)
