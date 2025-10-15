@@ -12,19 +12,19 @@ def run_command_with_retries(command, max_retries=0):
             else:
                 print("All attempts failed, moving to the next command.")
 
-datasets=['CiteSeer'] # Cora
+datasets=['CiteSeer'] 
 
 for dataset in datasets:
 
     command = [
-        "python", "Train_fedlag.py",
+        "python", "Train_fedlag_CiteSeer_extremely_label_scarce.py",
         "--dataset", str(dataset),
     ]
     print(f"Running command: {' '.join(command)}")
     run_command_with_retries(command, max_retries=1)
 
     command = [
-        "python", "Train_fedtad.py",
+        "python", "Train_fedtad_CiteSeer_extremely_label_scarce.py",
         "--dataset", str(dataset),
     ]
 
