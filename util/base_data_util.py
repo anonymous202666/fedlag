@@ -51,7 +51,7 @@ def louvain_partition(graph, num_clients, delta=20):
     for key in partition.keys():
         if partition[key] not in groups:
             groups.append(partition[key])
-    print(groups)
+
     partition_groups = {group_i: [] for group_i in groups}
 
     for key in partition.keys():
@@ -65,7 +65,7 @@ def louvain_partition(graph, num_clients, delta=20):
             new_grp_i = max(groups) + 1
             groups.append(new_grp_i)
             partition_groups[new_grp_i] = long_group[group_len_max:]
-    print(groups)
+ 
 
     len_list = []
     for group_i in groups:
