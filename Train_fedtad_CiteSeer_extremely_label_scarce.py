@@ -4,8 +4,12 @@ import warnings
 import copy
 import torch
 import torch.nn as nn
-import torch.nn.functional as Ff
+import torch.nn.functional as Fnn
 from torch.optim import Adam
+import hdbscan
+from hdbscan.validity import validity_index
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
 import pandas as pd
 from util.task_util import (
     cal_topo_emb,
@@ -27,15 +31,15 @@ parser = argparse.ArgumentParser()
 
 # experimental environment setup
 parser.add_argument('--add_gaussian_noise', type=float, default=0)
-parser.add_argument('--hop', type=int, default=1) # r
-parser.add_argument('--seed', type=int, default=4621)
-parser.add_argument('--root', type=str, default='/home/ai2/work/fedtad/dataset')
+ 
+parser.add_argument('--seed', type=int, default=8044)
+parser.add_argument('--root', type=str, default='data/root')
 parser.add_argument('--gpu_id', type=str, default='0')
-parser.add_argument('--dataset', type=str, default="Cora")
+parser.add_argument('--dataset', type=str, default="CiteSeer")
 parser.add_argument('--partition', type=str, default="Louvain")
-parser.add_argument('--part_delta', type=int, default=10)
-parser.add_argument('--num_clients', type=int, default=10)
-parser.add_argument('--num_rounds', type=int, default=95)
+parser.add_argument('--part_delta', type=int, default=20)
+parser.add_argument('--num_clients', type=int, default=20)
+parser.add_argument('--num_rounds', type=int, default=20)
 parser.add_argument('--num_epochs', type=int, default=5)
 parser.add_argument('--num_dims', type=int, default=64)
 parser.add_argument('--lr', type=float, default=3e-2)
@@ -56,6 +60,69 @@ parser.add_argument('--lam1', type=float, default=2)
 parser.add_argument('--lam2', type=float, default=1)
 parser.add_argument('--labeling_ratio', type=float, default=0.01)
 args = parser.parse_args()
+
+def get_Z_for_rankme(model, data):
+    """
+    Obtain node representations for proxy metrics.
+    We call model.forward(data, return_embed=True) so that it returns (logits, x_dis, x_hid),
+    and we use x_hid (N x d) as Z. If not available, we fallback to logits.
+    """
+    model.eval()
+    with torch.no_grad():
+        out = model.forward(data, return_embed=True)  # (logits, x_dis, x_hid)
+        if isinstance(out, tuple) and len(out) == 3:
+            logits, _, x_hid = out
+            Z = x_hid
+        else:
+            # Fallback to logits if something unexpected happens
+            logits = model.forward(data)
+            Z = logits
+    return Z
+
+
+def rankme_effective_rank(Z, center=True, l2norm=True, eps=1e-2):
+    """
+    Effective rank (RankMe) on Z \in R^{N x d}.
+    """
+    if l2norm:
+        Z = Fnn.normalize(Z, dim=1)
+    # Covariance-like matrix + ridge
+    C = (Z.T @ Z) / (Z.size(0) + 1e-12)
+    C = C + eps * torch.eye(C.size(0), device=C.device, dtype=C.dtype)
+    # Symmetric eigendecomposition
+    evals = torch.linalg.eigvalsh(C).clamp_min(1e-12)
+    p = evals / (evals.sum() + 1e-12)
+    H = -(p * (p + 1e-12).log()).sum()
+    return torch.exp(H)  # effective rank
+
+
+def cluster_and_score_hdbscan(Z, random_state=42):
+    """
+    HDBSCAN(+PCA) clustering then compute silhouette on non-noise points.
+    Returns: (labels, silhouette_score or NaN)
+    """
+    Z = Fnn.normalize(Z, dim=1).detach().cpu().numpy()
+    N, d = Z.shape
+    m = max(2, min(50, N - 1, d))
+    Zr = PCA(n_components=m, random_state=random_state).fit_transform(Z)
+
+    min_cluster_size = max(5, int(0.02 * N))
+    min_samples = max(5, int(0.01 * N))
+
+    clt = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size,
+                          min_samples=min_samples,
+                          metric='euclidean',
+                          cluster_selection_method='eom')
+    labels = clt.fit_predict(Zr)  # -1 is noise
+    sil = float('nan')
+    valid_mask = labels >= 0
+    if valid_mask.sum() >= 10 and len(set(labels[valid_mask])) >= 2:
+        sil = silhouette_score(Zr[valid_mask], labels[valid_mask])
+    return labels, float(sil)
+ 
+USE_SIL = args.dataset in {"Cora", "CiteSeer", "PubMed"}
+USE_RANKME = args.dataset in {"CS", "Physics", "ogbn-arxiv"}
+
 num_classes = get_num_classes(args.dataset)
 
 
@@ -185,7 +252,7 @@ if __name__ == "__main__":
             c_cnt[class_i] = int(num_gen * 1 / dataset.num_classes)
         c_cnt[-1] += num_gen - sum(c_cnt)
 
-        print(f"pseudo label distribution: {c_cnt}")
+        # print(f"pseudo label distribution: {c_cnt}")
         c = torch.zeros(num_gen).to(device).long()
         ptr = 0
         for class_i in range(dataset.num_classes):
@@ -218,7 +285,7 @@ if __name__ == "__main__":
                 for client_id in range(args.num_clients):
                     ######  generator forward  ########
                     node_logits = generator.forward(z=z, c=c)
-                    node_norm = Ff.normalize(node_logits, p=2, dim=1)
+                    node_norm = Fnn.normalize(node_logits, p=2, dim=1)
                     adj_logits = torch.mm(node_norm, node_norm.t())
                     pseudo_graph = construct_graph(
                         node_logits, adj_logits, k=args.topk)
@@ -256,7 +323,7 @@ if __name__ == "__main__":
 
                 ############ generator loss #############
                 loss_G = args.lam1 * loss_sem + loss_diverg + args.lam2 * loss_div
-                closs_G.backward()
+                loss_G.backward()
                 generator_optimizer.step()
 
                 ########### train global model ###########
@@ -265,7 +332,7 @@ if __name__ == "__main__":
 
                 ######  generator forward  ########
                 node_logits = generator.forward(z=z, c=c)
-                node_norm = Ff.normalize(node_logits, p=2, dim=1)
+                node_norm = Fnn.normalize(node_logits, p=2, dim=1)
                 adj_logits = torch.mm(node_norm, node_norm.t())
                 pseudo_graph = construct_graph(node_logits.detach(), adj_logits.detach(), k=args.topk)
 
@@ -298,34 +365,59 @@ if __name__ == "__main__":
         # global model broadcast
         for client_id in range(args.num_clients):
             local_models[client_id].load_state_dict(global_model.state_dict())
+        
+
+        per_client_proxy = []
+        per_client_weights = []
 
         for client_id in range(args.num_clients):
             local_models[client_id].eval()
             logits = local_models[client_id].forward(subgraphs[client_id])
-            test_idx = subgraphs[client_id].test_idx
-            val_idx = subgraphs[client_id].val_idx
             acc_test = accuracy(logits[subgraphs[client_id].test_idx],
                                 subgraphs[client_id].y[subgraphs[client_id].test_idx])
-            acc_val = accuracy(logits[subgraphs[client_id].val_idx],
-                               subgraphs[client_id].y[subgraphs[client_id].val_idx])
             global_acc_test += subgraphs[client_id].x.shape[0] / dataset.global_data.x.shape[0] * acc_test
-            global_acc_val += subgraphs[client_id].x.shape[0] / dataset.global_data.x.shape[0] * acc_val
 
-        if global_acc_val > best_server_val:
-            best_server_val = global_acc_val
+            # === ADDED: proxy metric
+            Z = get_Z_for_rankme(local_models[client_id], subgraphs[client_id])  # [N, d]
+            if USE_SIL:
+                _, sil = cluster_and_score_hdbscan(Z)
+                metric_value = torch.tensor(sil, device=Z.device, dtype=torch.float32)
+            else:
+                rm = rankme_effective_rank(Z, center=True)
+                metric_value = rm if isinstance(rm, torch.Tensor) else torch.tensor(rm, device=Z.device, dtype=torch.float32)
+
+            per_client_proxy.append(metric_value)
+            per_client_weights.append(subgraphs[client_id].x.shape[0])
+
+        # weighted mean of proxy
+        weights = torch.tensor(per_client_weights, device=device, dtype=torch.float32)
+        proxy_stack = torch.stack(per_client_proxy)
+        mask = torch.isfinite(proxy_stack)
+        if mask.any():
+            global_proxy_metric = (proxy_stack[mask] * (weights[mask] / weights[mask].sum())).sum().item()
+        else:
+            global_proxy_metric = float('-inf')  # fallback if all NaN
+
+        # === CHANGED: early stopping / best tracking uses proxy metric
+        if global_proxy_metric > best_server_val:
+            best_server_val = global_proxy_metric
             best_server_test = global_acc_test
             best_round = round_id
             no_improvement_count = 0
-            print("-" * 50)
-            print(f"[server]: new best round: {best_round}\tbest val acc: {best_server_val}   test: {best_server_test:.2f}")
+            # print("-" * 50)
+            tag = "Silhouette" if USE_SIL else "RankMe"
+            # print(f"[server]: new best round: {best_round}\tbest {tag}: {best_server_val:.4f}   test: {best_server_test:.2f}")
         else:
             no_improvement_count += 1
-            print(f"Current: {global_acc_val}  \t  test: {global_acc_test:.2f}")
+            tag = "Silhouette" if USE_SIL else "RankMe"
+            # print(f"Current {tag}: {global_proxy_metric:.4f}  \t  test: {global_acc_test:.2f}")
             if no_improvement_count == 30:
-                print(f" best round: {best_round}\tbest test: {best_server_test:.2f}")
+                # print(f" best round: {best_round}\tbest test: {best_server_test:.2f}")
                 break
 
         l_glb_acc_test.append(global_acc_test)
+
+print(f" Method : FedTAD, best round: {best_round}\tbest test: {best_server_test:.2f}")
 
 results = {
     'Seed': args.seed,
