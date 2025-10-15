@@ -172,8 +172,6 @@ class FGLDataset(Dataset):
         self.feat_dim = self.global_dataset.num_features
         self.out_dim = self.global_dataset.num_classes
         self.global_data = self.global_dataset.data
-
-        # 直接调用 process 方法重新划分并加载数据
         self.process()
         self.subgraphs = [self.get(i) for i in range(self.num_clients)]
         for i in range(len(self.subgraphs)):
