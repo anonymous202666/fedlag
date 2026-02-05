@@ -12,21 +12,22 @@ def run_command_with_retries(command, max_retries=0):
             else:
                 print("All attempts failed, moving to the next command.")
 
-datasets=['CiteSeer'] 
+dataset_scripts = {
+    "CiteSeer": "fedlag_CiteSeer_1%_labels.py",
+    "Cora": "fedlag_Cora_1%_labels.py",
+}
+
+datasets = ["CiteSeer", "Cora"]
 
 for dataset in datasets:
+    script = dataset_scripts.get(dataset)
+    if script is None:
+        print(f"Skipping unknown dataset: {dataset}")
+        continue
 
     command = [
-        "python", "Train_fedlag_CiteSeer_extremely_label_scarce.py",
+        "python", script,
         "--dataset", str(dataset),
     ]
-    print(f"Running command: {' '.join(command)}")
-    run_command_with_retries(command, max_retries=1)
-
-    command = [
-        "python", "Train_fedtad_CiteSeer_extremely_label_scarce.py",
-        "--dataset", str(dataset),
-    ]
-
     print(f"Running command: {' '.join(command)}")
     run_command_with_retries(command, max_retries=1)
