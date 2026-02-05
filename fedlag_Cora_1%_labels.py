@@ -586,11 +586,11 @@ if __name__ == "__main__":
             no_improvement_count = 0
             # print("-" * 50)
             tag = "Silhouette" if USE_SIL else "RankMe"
-            print(f"[server]: new best round: {best_round}\tbest {tag}: {best_server_val:.4f}   test: {best_server_test:.2f}")
+            # print(f"[server]: new best round: {best_round}\tbest {tag}: {best_server_val:.4f}   test: {best_server_test:.2f}")
         else:
             no_improvement_count += 1
             tag = "Silhouette" if USE_SIL else "RankMe"
-            print(f"Current {tag}: {global_proxy_metric:.4f}  \t  test: {global_acc_test:.2f}")
+            # print(f"Current {tag}: {global_proxy_metric:.4f}  \t  test: {global_acc_test:.2f}")
             if no_improvement_count == 30:
                 # print(f" best round: {best_round}\tbest test: {best_server_test:.2f}")
                 break
