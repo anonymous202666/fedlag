@@ -1,6 +1,6 @@
-# Anonymous ICML 2026 Submission
+# Anonymous  CIKM 2026 Submission
 
-This repository contains the PyTorch implementations and scripts for our FedLAG methods as described in our ICML 2026 paper.
+This repository contains the PyTorch implementations and scripts for our FedLAG methods as described in our CIKM 2026 paper.
 
 ## Requirements
 # create & activate a clean venv
